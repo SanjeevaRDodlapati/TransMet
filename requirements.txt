@@ -1,0 +1,12 @@
+h5py
+argparse
+scikit-learn
+scipy
+numpy
+pandas
+pytest
+keras>=2.0.2
+tensorflow>=1.0.1
+matplotlib
+seaborn
+numpydoc

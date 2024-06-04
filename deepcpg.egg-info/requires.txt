@@ -1,0 +1,12 @@
+h5py
+argparse
+scikit-learn
+scipy
+pandas
+numpy
+pytest
+torchinfo
+tensorflow
+matplotlib
+seaborn
+weblogo
