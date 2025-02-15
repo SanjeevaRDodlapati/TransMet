@@ -45,6 +45,7 @@ from deepcpg import models as mod
 from deepcpg.data import hdf
 from deepcpg.utils import ProgressBar, to_list
 
+import tensorflow as tf
 from tensorflow.keras import mixed_precision
 policy = mixed_precision.Policy('mixed_float16')
 mixed_precision.set_global_policy(policy)
@@ -66,9 +67,14 @@ class H5Writer(object):
                 dtype=dtype,
                 compression=compression
             )
-        self.out_file[name][self.idx:(self.idx + len(data))] = data
-        if not stay:
-            self.idx += len(data)
+        try:
+            self.out_file[name][self.idx:(self.idx + len(data))] = data
+            if not stay:
+                self.idx += len(data)
+        except:
+            self.out_file[name][self.idx:(self.idx + data.size)] = data
+            if not stay:
+                self.idx += data.size
 
     def write_dict(self, data, name='', level=0, *args, **kwargs):
         size = None
@@ -81,7 +87,10 @@ class H5Writer(object):
                 if size:
                     assert size == len(value)
                 else:
-                    size = len(value)
+                    try:
+                        size = len(value)
+                    except:
+                        size = value.size
                 self(_name, value, stay=True, *args, **kwargs)
         if level == 0:
             self.idx += size
@@ -177,8 +186,11 @@ class App(object):
             raise ValueError('No model files provided!')
 
         log.info('Loading model ...')
-        model = mod.load_model(opts.model_files)
-        model.input_names = ['dna']
+        log.info(f"Num GPUs Available: {len(tf.config.list_physical_devices('GPU'))}")
+        with tf.device('/GPU:0'): # Moving model to GPU
+            model = mod.load_model(opts.model_files)
+            model.input_names = ['dna']
+        
 
         log.info('Loading data ...')
         nb_sample = dat.get_nb_sample(opts.data_files, opts.nb_sample)
@@ -226,13 +238,17 @@ class App(object):
             nb_tot += batch_size
             progbar.update(batch_size)
 
-            # preds = to_list(model.predict(inputs, verbose=None))
-            preds = model.predict(inputs, verbose=None)
+            preds = to_list(model.predict(inputs, verbose=None))
+            # preds = model.predict(inputs, verbose=None)
 
             data_batch = dict()
             data_batch['preds'] = dict()
             data_batch['outputs'] = dict()
             for i, name in enumerate(model.output_names):
+                # if preds.shape[1] ==1:
+                #     data_batch['preds'][name] = preds.squeeze()
+                # else:
+                #     data_batch['preds'][name] = preds[i].squeeze()
                 data_batch['preds'][name] = preds[i].squeeze()
                 data_batch['outputs'][name] = outputs[name].squeeze()
 

@@ -24,7 +24,7 @@ import tensorflow as tf
 import tensorflow.keras as kr
 from tensorflow.keras import callbacks as kcbk
 from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import Adam, Nadam, SGD
+from tensorflow.keras.optimizers import Adam, Nadam, SGD, RMSprop
 
 from deepcpg import callbacks as cbk
 from deepcpg import data as dat
@@ -35,14 +35,50 @@ from deepcpg.data import hdf, OUTPUT_SEP
 from deepcpg.utils import format_table, make_dir, EPS
 from transfer import utils
 
+
+
+# set mixed precidion to reduce memory usage
 from tensorflow.keras import mixed_precision
 policy = mixed_precision.Policy('mixed_float16')
 mixed_precision.set_global_policy(policy)
 
 
+
+def print_total_memory_usage():
+    gpus = tf.config.list_physical_devices('GPU')
+    for gpu in gpus:
+        device_name = gpu.name.split("/physical_device:")[-1]
+        memory_info = tf.config.experimental.get_memory_info(device_name)
+        current_memory = memory_info['current']
+        peak_memory = memory_info['peak']
+        print(f"Current Memory Usage on {device_name}: {current_memory / (1024 ** 2):.2f} MB")
+        print(f"Peak Memory Usage on {device_name}: {peak_memory / (1024 ** 2):.2f} MB")
+        
+def print_model_memory_usage(model):
+    # Total parameters: calculate number of elements for each weight variable
+    total_params = sum(tf.size(p).numpy() for p in model.trainable_weights)
+    memory_per_param = 4  # Assuming float32 (4 bytes per parameter)
+    total_memory_params = total_params * memory_per_param
+    print(f"Model parameters memory usage: {total_memory_params / (1024 ** 2):.2f} MB")
+
+    # Print the total GPU memory usage
+    print_total_memory_usage()
+
+
+# def print_model_memory_usage(model):
+#     # Total parameters
+#     total_params = sum(p.count for p in model.trainable_weights)
+#     memory_per_param = 4  # Assuming float32 (4 bytes per parameter)
+#     total_memory_params = total_params * memory_per_param
+#     print(f"Model parameters memory usage: {total_memory_params / (1024 ** 2):.2f} MB")
+
+#     # Print the total GPU memory usage
+#     print_total_memory_usage()
+
 LOG_PRECISION = 4
 
-# CLA_METRICS = [met.acc, metrics.auc]
+# CLA_METRICS = []
+# CLA_METRICS = [met.acc, met.auc]
 # CLA_METRICS = [met.acc, kr.metrics.AUC(name = 'auc')]
 CLA_METRICS = [kr.metrics.BinaryAccuracy(name = 'acc'),
                # kr.metrics.AUC(name = 'auc'),
@@ -50,7 +86,7 @@ CLA_METRICS = [kr.metrics.BinaryAccuracy(name = 'acc'),
             ]
 
 CAT_METRICS = [
-                # kr.metrics.KLDivergence(name='kld')
+                kr.metrics.KLDivergence(name='kld')
             ]
 
 REG_METRICS = [met.mse, met.mae]
@@ -153,12 +189,9 @@ def perf_logs_str(logs):
 
 def get_metrics(output_name, loss_fn=None):
     _output_name = output_name.split(OUTPUT_SEP)
-    if _output_name[0] == 'cpg':
-        if loss_fn == 'kl_divergence':
-            metrics = CLA_METRICS + CAT_METRICS
-        else:
-            metrics = CLA_METRICS
-
+    if loss_fn == 'kl_divergence':
+        # metrics = CLA_METRICS + CAT_METRICS
+        metrics = CAT_METRICS
     elif _output_name[0] == 'bulk':
         metrics = REG_METRICS + CLA_METRICS
     elif _output_name[-1] in ['diff', 'mode', 'cat2_var']:
@@ -281,12 +314,37 @@ class App(object):
             '--learning_rate_decay',
             help='Exponential learning rate decay factor',
             type=float,
-            default=0.975)
+            default=0.8)
+        g.add_argument(
+            '--warmup_lr',
+            help='Initial lr to start warm up from',
+            type=float,
+            default=5e-7)
+        g.add_argument(
+            '--warm_up',
+            help='Whether to have warm up lr schedule or not',
+            type=bool,
+            default=False)
+        g.add_argument(
+            '--warmup_scale',
+            help='Factory by which lr scaled up',
+            type=float,
+            default=5.5)
         g.add_argument(
             '--nb_epoch',
             help='Maximum # training epochs',
             type=int,
             default=30)
+        g.add_argument(
+            '--warmup_epochs',
+            help='Number of epochs lr increases',
+            type=int,
+            default=3)
+        g.add_argument(
+            '--rapid_decay_epochs',
+            help='Number of epochs lr decreases rapidly',
+            type=int,
+            default=6)
         g.add_argument(
             '--nb_train_sample',
             help='Maximum # training samples',
@@ -309,7 +367,7 @@ class App(object):
             '--early_stopping',
             help='Early stopping patience',
             type=int,
-            default=10)
+            default=8)
         g.add_argument(
             '--dropout',
             help='Dropout rate',
@@ -336,6 +394,11 @@ class App(object):
             type=str,
             default='Adam')
         g.add_argument(
+            '--clipnorm',
+            help='clip norm vlaue to stabilize model',
+            type=float,
+            default=4)
+        g.add_argument(
             '--run_eagerly',
             help='Whether to train in eager mode (True/False)',
             type=bool,
@@ -359,14 +422,10 @@ class App(object):
             '--nb_output',
             type=int,
             help='Maximum number of outputs')
-        # g.add_argument(
-        #     '--no_class_weights',
-        #     help='Do not weight classes',
-        #     action='store_true')
         g.add_argument(
             '--loss_fn',
             type=str,
-            help='name of the loss funtion to use (binary_crossentropy or kl_divergence)',
+            help='name of the loss funtion to use (binary_crossentropy/binary_focal_crossentropy or kl_divergence)',
             default='binary_crossentropy')
         g.add_argument(
             '--alpha',
@@ -448,7 +507,8 @@ class App(object):
         callbacks.append(kcbk.ModelCheckpoint(
             os.path.join(opts.out_dir, 'model_weights_val.keras'),
             monitor=monitor,
-            save_best_only=True, verbose=1
+            save_best_only=True,
+            verbose=1,
         ))
 
         max_time = int(opts.max_time * 3600) if opts.max_time else None
@@ -457,13 +517,34 @@ class App(object):
             stop_file=opts.stop_file,
             verbose=1
         ))
+        
+        # Callback to load weights of best model so far  if validation loss is not improved
+        callbacks.append(cbk.LoadBestWeights(
+            filepath=os.path.join(opts.out_dir, 'model_weights_val.keras'),
+            monitor='val_loss',
+            mode='min'
+        ))
 
-
-        # callbacks.append(kcbk.TensorBoard(log_dir = opts.out_dir,
-        #                                   histogram_freq=1))
 
         def learning_rate_schedule(epoch):
-            lr = opts.learning_rate * opts.learning_rate_decay**epoch
+            lr = opts.learning_rate
+            # lr = tf.keras.backend.get_value(self.model.optimizer.lr)
+            warm_up = opts.warm_up
+            
+            if warm_up:
+                warmup_lr = opts.warmup_lr
+                if epoch <= opts.warmup_epochs:
+                    lr = warmup_lr * opts.warmup_scale ** epoch  # Increase lr
+                elif epoch <= (opts.warmup_epochs + opts.rapid_decay_epochs):
+                    lr = warmup_lr * opts.warmup_scale ** opts.warmup_epochs * 0.5 ** (epoch - opts.warmup_epochs)  # Decrease lr
+                else:
+                    lr = warmup_lr * opts.warmup_scale ** opts.warmup_epochs * 0.5 ** (opts.rapid_decay_epochs)  * 0.9 ** (epoch - opts.warmup_epochs - opts.rapid_decay_epochs)
+                    
+            else:
+                # Original schedule (modify as needed)
+                lr *= opts.learning_rate_decay ** epoch
+
+            # lr = opts.learning_rate * opts.learning_rate_decay**epoch
             self.log.info('Learning rate: %.3g' % lr)
             return lr
 
@@ -543,13 +624,15 @@ class App(object):
             rename_layers(dna_model, 'dna')
         else:
             log.info('Building DNA model ...')
+            dna_wlen = dat.get_dna_wlen(opts.train_files[0], opts.dna_wlen)
             dna_model_builder = mod.dna.get(opts.dna_model[0])(
+                dna_wlen=dna_wlen,
                 nb_hidden=opts.nb_hidden,
                 l1_decay=opts.l1_decay,
                 l2_decay=opts.l2_decay,
                 dropout=opts.dropout,
                 batch_norm=opts.batch_norm)
-            dna_wlen = dat.get_dna_wlen(opts.train_files[0], opts.dna_wlen)
+            # dna_wlen = dat.get_dna_wlen(opts.train_files[0], opts.dna_wlen)
             dna_inputs = dna_model_builder.inputs(dna_wlen)
             dna_model = dna_model_builder(dna_inputs)
         return dna_model
@@ -877,16 +960,27 @@ class App(object):
             self.metrics[output_name] = get_metrics(output_name, loss_fn=opts.loss_fn)
 
         log.info("%s model is using %s optimizer" %(opts.dna_model[0], opts.optimizer))
-        if opts.optimizer == 'SGD':
-            optimizer = SGD(learning_rate=opts.learning_rate, momentum=0.9, weight_decay=1e-5)
-        else:
-            optimizer = Adam(learning_rate=opts.learning_rate)
+        
+        if opts.optimizer == 'RMSprop':
+            optimizer = RMSprop(learning_rate=opts.learning_rate)
+        elif opts.optimizer == 'SGD':
+            optimizer = SGD(learning_rate=opts.learning_rate,
+                            momentum=0.9, weight_decay=1e-5)
+        else: # default
+            # optimizer = Adam(learning_rate=opts.learning_rate)
+            optimizer = Adam(learning_rate=opts.learning_rate,
+                             clipnorm=opts.clipnorm,
+                             )
 
         model.compile(optimizer=optimizer,
                       loss=mod.get_objectives(output_names, opts.loss_fn, opts.alpha, opts.gamma),
                       loss_weights=output_weights,
                       metrics=self.metrics,
                       run_eagerly=opts.run_eagerly)
+        
+        
+        print_model_memory_usage(model) # print model memory usage
+        
         # model.run_eagerly = True
         model.input_names = ['dna'] ## Needed to be compatible with previous code
 

@@ -249,7 +249,8 @@ def load_model(model_files, custom_objects=CUSTOM_OBJECTS, log=None):
             model = f.read()
         model = km.model_from_json(model, custom_objects=custom_objects)
     if len(model_files) > 1:
-        model.load_weights(model_files[1])
+        model.load_weights(model_files[1], skip_mismatch=True)
+
     return model
 
 
@@ -280,6 +281,15 @@ def get_objectives(output_names, loss_fn, alpha=None, gamma=None):
         objectives[output_name] = objective
     return objectives
 
+def get_objective(loss_fn, alpha=None, gamma=None):
+
+    if loss_fn == 'kl_divergence':
+        objective = 'kl_divergence'
+    elif loss_fn == 'binary_focal_crossentropy':
+        objective = tf.keras.losses.BinaryFocalCrossentropy(alpha=alpha, gamma=gamma)
+    else:
+        objective = 'binary_crossentropy'
+    return objective
 
 def add_output_layers(stem, output_names, loss_fn=None, init='glorot_uniform'):
     """Add and return outputs to a given layer.
@@ -483,7 +493,7 @@ def is_output_layer(layer, model):
     return layer.name in model.output_names
 
 
-class Model(object):
+class Model(tf.keras.layers.Layer):
     """Abstract model call.
 
     Abstract class of DNA, CpG, and Joint models.
@@ -500,8 +510,11 @@ class Model(object):
         Name of Keras initialization.
     """
 
-    def __init__(self, dropout=0.0, l1_decay=0.0, l2_decay=0.0,
+    def __init__(self, dna_wlen=1001, nb_hidden=512, dropout=0.0,
+                 l1_decay=0.0, l2_decay=0.0,
                  batch_norm=False, init='glorot_uniform'):
+        self.dna_wlen = dna_wlen
+        self.nb_hidden = nb_hidden
         self.dropout = dropout
         self.l1_decay = l1_decay
         self.l2_decay = l2_decay
@@ -727,11 +740,10 @@ class DataReader(object):
 
                 for name in self.output_names:
                     outputs[name] = data_raw['outputs/%s' % name]
-
-                    if self.binarize_labels:
-                        outputs[name] = get_binarized_labels(outputs[name])
-                    elif self.loss_fn == 'kl_divergence':
+                    if self.loss_fn == 'kl_divergence':
                         outputs[name] = get_output_distribution(outputs[name])
+                    elif self.binarize_labels:
+                        outputs[name] = get_binarized_labels(outputs[name])
 
                     cweights = class_weights[name] if class_weights else None
                     weights[name] = get_sample_weights(outputs[name], cweights)
@@ -746,6 +758,7 @@ class DataReader(object):
 
 def data_reader_from_model(model, outputs=True,
                            replicate_names=None,
+                           output_names=None,
                            loss_fn=None,
                            binarize_labels=True):
     """Return :class:`DataReader` from `model`.
@@ -771,7 +784,7 @@ def data_reader_from_model(model, outputs=True,
     use_dna = False
     dna_wlen = None
     cpg_wlen = None
-    output_names = None
+    output_names = output_names
     encode_replicates = False
 
     input_shapes = to_list(model.input_shape)
@@ -803,9 +816,98 @@ def data_reader_from_model(model, outputs=True,
         # Return output labels.
     output_names = model.output_names
 
+
     # loss_fn = model.loss[model.output_names[0]]
 
     return DataReader(output_names=output_names,
+                      use_dna=use_dna,
+                      dna_wlen=dna_wlen,
+                      cpg_wlen=cpg_wlen,
+                      replicate_names=replicate_names,
+                      encode_replicates=encode_replicates,
+                      loss_fn=loss_fn,
+                      binarize_labels=binarize_labels)
+
+class DNADataReader(object):
+
+    def __init__(self, output_names=None,
+                 use_dna=True, dna_wlen=None,
+                 replicate_names=None, cpg_wlen=None, cpg_max_dist=25000,
+                 encode_replicates=False,
+                 loss_fn=None,
+                 binarize_labels=True):
+        self.output_names = to_list(output_names)
+        self.use_dna = use_dna
+        self.dna_wlen = dna_wlen
+        self.replicate_names = to_list(replicate_names)
+        self.cpg_wlen = cpg_wlen
+        self.cpg_max_dist = cpg_max_dist
+        self.encode_replicates = encode_replicates
+        self.loss_fn = loss_fn
+        self.binarize_labels = binarize_labels
+
+    def _prepro_dna(self, dna):
+        if self.dna_wlen:
+            cur_wlen = dna.shape[1]
+            center = cur_wlen // 2
+            delta = self.dna_wlen // 2
+            dna = dna[:, (center - delta):(center + delta + 1)]
+        return int_to_onehot(dna)
+
+
+    def __call__(self, data_files, class_weights=None, *args, **kwargs):
+        names = []
+        if self.use_dna:
+            names.append('inputs/dna')
+
+        if self.output_names:
+            for name in self.output_names:
+                names.append('outputs/%s' % name)
+
+        for data_raw in hdf.reader(data_files, names, *args, **kwargs):
+            inputs = dict()
+
+            if self.use_dna:
+                inputs['dna'] = self._prepro_dna(data_raw['inputs/dna'])
+
+            if not self.output_names:
+                yield inputs
+            else:
+                outputs = []
+                weights = []
+                for name in self.output_names:
+                    output = data_raw['outputs/%s' % name]
+
+                    if self.binarize_labels:
+                        output = get_binarized_labels(output)
+                    elif self.loss_fn == 'kl_divergence':
+                        output = get_output_distribution(output)
+                    outputs.append(output)
+
+                    cweights = class_weights[name] if class_weights else None
+                    weight = get_sample_weights(output, cweights)
+                    weights.append(weight)
+
+                outputs = np.transpose(np.array(outputs))
+                weights = np.transpose(np.array(weights))
+                yield (inputs, outputs, weights)
+
+def data_reader(model, replicate_names=None,
+                output_names=None, loss_fn=None, binarize_labels=True):
+
+    use_dna = False
+    dna_wlen = None
+    cpg_wlen = None
+    encode_replicates = False
+
+    input_shapes = to_list(model.input_shape)
+    for input_name, input_shape in zip(model.input_names, input_shapes):
+        if input_name == 'dna':
+            # Read DNA sequences.
+            use_dna = True
+            dna_wlen = input_shape[1]
+
+    return DNADataReader(output_names=output_names,
                       use_dna=use_dna,
                       dna_wlen=dna_wlen,
                       cpg_wlen=cpg_wlen,

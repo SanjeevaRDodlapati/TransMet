@@ -13,7 +13,7 @@ import numpy as np
 import six
 
 from .utils import format_table
-from tensorflow.python.ops.gen_batch_ops import batch
+# from tensorflow.python.ops.gen_batch_ops import batch
 
 
 class PerformanceLogger(Callback):
@@ -267,6 +267,39 @@ class PerformanceLogger(Callback):
                                    header=self._step == 1))
 
 
+class LoadBestWeights(Callback):
+    def __init__(self, filepath, monitor='val_loss', mode='min',
+                 verbose=1, logger=print):
+        super(LoadBestWeights, self).__init__()
+        self.filepath = filepath
+        self.monitor = monitor
+        self.mode = mode
+        self.best_weights = None
+        self.best_epoch = 0
+        self.best_value = float('inf') if mode == 'min' else float('-inf')
+        self.logger = logger
+        self.verbose = verbose
+
+    def log(self, msg):
+        if self.verbose:
+            self.logger(msg)
+
+    def on_epoch_end(self, epoch, logs=None):
+        current_value = logs.get(self.monitor)
+
+        # Check if we have a new best value
+        if (self.mode == 'min' and current_value < self.best_value) or \
+                (self.mode == 'max' and current_value > self.best_value):
+            self.best_value = current_value
+            self.best_epoch = epoch
+            # Save the best weights
+            self.best_weights = self.model.get_weights()
+            # self.model.save_weights(self.filepath)
+            # print(f"New best model found at epoch {epoch + 1} with {self.monitor}: {current_value:.4f}")
+        else:
+            self.log("Loading best weights from epoch %d, " % (self.best_epoch + 1))
+            # Load the best weights if the validation loss did not improve
+            self.model.set_weights(self.best_weights)
 class TrainingStopper(Callback):
     """Stop training after certain time or when file is detected.
 
