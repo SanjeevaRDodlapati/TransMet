@@ -36,6 +36,61 @@ class DnaModel(Model):
 
 
 
+class ChromBPNet(DnaModel):
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(ChromBPNet, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+        
+        # default parameters
+        self.conv1_kernel_size = 21
+        self.profile_kernel_size = 75
+        # self.num_tasks = 1 
+        self.n_dil_layers = 3 #e example 
+        
+
+    def __call__(self, inputs):
+        x = inputs[0]
+
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        filter = 64
+
+        # first convolution without dilation
+        x = kl.Conv1D(filters=filter,
+                      kernel_size=self.conv1_kernel_size,
+                      padding='valid')(x)
+        x = kl.Activation('relu')(x)
+
+        # dilation layers
+        layer_names = [str(i) for i in range(1, self.n_dil_layers + 1)]
+        for i in range(1, self.n_dil_layers + 1):
+            conv_layer_name = f'bpnet_{layer_names[i-1]}conv'
+            conv_x = kl.Conv1D(filters=filter,
+                               kernel_size=3,
+                               padding='valid',
+                               dilation_rate=2**i)(x)
+            conv_x = kl.Activation('relu')(conv_x)
+            x_len = K.int_shape(x)[1]
+            conv_x_len = K.int_shape(conv_x)[1]
+            assert((x_len - conv_x_len) % 2 == 0)
+            
+            x = kl.Cropping1D((x_len - conv_x_len) // 2, name=f"bpnet_{layer_names[i-1]}crop")(x)
+            x = kl.add([conv_x, x])
+
+        # x = kl.Flatten()(x)
+        x = kl.GlobalAvgPool1D()(x)
+
+        # fully connected layer
+        # x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+        #             kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+
+
+        # fully connecteed layer for single output per sequence
+        x = kl.Dense(1)(x)
+
+        return self._build(inputs, x)
+
+
 class DeepSEA(DnaModel):
     def __init__(self, nb_hidden=512, *args, **kwargs):
         super(DeepSEA, self).__init__(*args, **kwargs)
@@ -279,71 +334,6 @@ class DeepSEA3Hyb(DnaModel):
         
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# class RelativePositionMultiHeadAttention(kl.Layer):
-#     def __init__(self, num_heads, key_dim, **kwargs):
-#         super(RelativePositionMultiHeadAttention, self).__init__(**kwargs)
-#         self.num_heads = num_heads
-#         self.key_dim = key_dim
-#         self.attention = kl.MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)
-
-#         # Define relative position embedding with float16 to match model input dtype
-#         self.relative_position_embedding = self.add_weight(
-#             name="relative_position_embedding",
-#             shape=(self.num_heads, 1, self.key_dim),  # Adjusted shape for dynamic sequence length
-#             initializer="random_normal",
-#             trainable=True,
-#             dtype=tf.float16
-#         )
-
-#     def call(self, query, value):
-#         # Cast inputs to float16 to match relative_position_embedding dtype
-#         query = tf.cast(query, dtype=tf.float16)
-#         value = tf.cast(value, dtype=tf.float16)
-
-#         batch_size, seq_length, embed_dim = tf.shape(query)[0], tf.shape(query)[1], tf.shape(query)[2]
-
-#         # Reshape query and value to add heads dimension
-#         query = tf.reshape(query, (batch_size, seq_length, self.num_heads, self.key_dim))
-#         value = tf.reshape(value, (batch_size, seq_length, self.num_heads, self.key_dim))
-
-#         # Expand and broadcast the relative position embedding to match sequence length
-#         rel_pos_emb_expanded = tf.broadcast_to(self.relative_position_embedding, [self.num_heads, seq_length, self.key_dim])
-
-#         # Transpose rel_pos_emb_expanded for alignment with query shape
-#         rel_pos_emb_expanded = tf.transpose(rel_pos_emb_expanded, perm=[1, 0, 2])  # Shape: (seq_length, num_heads, key_dim)
-#         rel_pos_emb_expanded = tf.expand_dims(rel_pos_emb_expanded, axis=0)  # Shape: (1, seq_length, num_heads, key_dim)
-        
-#         # Add relative position embedding to query and value
-#         query += rel_pos_emb_expanded
-#         value += rel_pos_emb_expanded
-
-#         # Reshape query and value back to (batch_size, seq_length, embed_dim) for multi-head attention
-#         query = tf.reshape(query, (batch_size, seq_length, embed_dim))
-#         value = tf.reshape(value, (batch_size, seq_length, embed_dim))
-
-#         # Apply multi-head attention
-#         attn_output = self.attention(query, value)
-#         return attn_output
-
-#     def compute_output_shape(self, input_shape):
-#         return input_shape[0], input_shape[1], input_shape[2]
-        
         
         
 
@@ -1701,161 +1691,7 @@ class TranCNNLean2(DnaModel):
 
         return self._build(inputs, x)
         
-        
-
-# class TranCNNRes2L(DnaModel):
-#     def __init__(self, nb_hidden=512, num_heads=16, ff_dim=512, num_transformer_blocks=2, *args, **kwargs):
-#         super(TranCNNRes2L, self).__init__(*args, **kwargs)
-#         self.nb_hidden = nb_hidden
-#         self.num_heads = num_heads
-#         self.ff_dim = ff_dim
-#         self.num_transformer_blocks = num_transformer_blocks
-#         self.init = "he_normal"  # 'glorot_uniform' or "he_normal"
-#         self.act = gelu # 'relu' or 'elu' or gelu (gelu is a function defined at the top of this file)
-
-#     def __call__(self, inputs):
-#         x = inputs[0]
-#         input_length = x.shape[1]
-
-#         # Determine num_transformer_blocks based on input_length
-#         if input_length >= 32000:
-#             self.num_transformer_blocks = 6
-#         elif input_length >= 16000:
-#             self.num_transformer_blocks = 5
-#         elif input_length >= 8000:
-#             self.num_transformer_blocks = 4
-#         elif input_length >= 4000:
-#             self.num_transformer_blocks = 3
-
-#         # Define kernel regularizer
-#         kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
-
-#         # Convolutional block 1
-#         shortcut = x  # Save the input for the residual connection
-#         x = kl.Conv1D(filters=360, kernel_size=24, kernel_initializer=self.init,
-#                       kernel_regularizer=kernel_regularizer, padding='same', activation=self.act)(x)
-
-#         # Convolutional block 2
-#         x = kl.Conv1D(filters=360, kernel_size=24, kernel_initializer=self.init,
-#                       kernel_regularizer=kernel_regularizer, padding='same', activation=self.act)(x)
-#         x = kl.BatchNormalization()(x)  # Batch normalization after two convolutions
-#         x = kl.MaxPooling1D(pool_size=12, strides=12)(x)
-#         x = kl.Dropout(0.3)(x)
-
-#         # Adjust shortcut dimension
-#         shortcut = kl.MaxPooling1D(pool_size=12, strides=12)(shortcut)  # Downsample shortcut
-#         shortcut = kl.Conv1D(filters=360, kernel_size=1, kernel_initializer=self.init, padding='same')(shortcut)  # Match filter count
-#         x = kl.add([x, shortcut])  # Add residual connection
-
-#         # Convolutional block 3
-#         shortcut = x  # Save the input for the residual connection
-#         x = kl.Conv1D(filters=512, kernel_size=12, kernel_initializer=self.init,
-#                       kernel_regularizer=kernel_regularizer, padding='same', activation=self.act)(x)
-
-#         # Convolutional block 4
-#         x = kl.Conv1D(filters=512, kernel_size=12, kernel_initializer=self.init,
-#                       kernel_regularizer=kernel_regularizer, padding='same', activation=self.act)(x)
-#         x = kl.BatchNormalization()(x)  # Batch normalization after two convolutions
-#         x = kl.MaxPooling1D(pool_size=6, strides=6)(x)
-#         x = kl.Dropout(0.4)(x)
-
-#         # Adjust shortcut dimension
-#         shortcut = kl.MaxPooling1D(pool_size=6, strides=6)(shortcut)  # Downsample shortcut
-#         shortcut = kl.Conv1D(filters=512, kernel_size=1, kernel_initializer=self.init, padding='same')(shortcut)  # Match filter count
-#         x = kl.add([x, shortcut])  # Add residual connection
-
-#         # Convolutional block 5: Runs for sequence length 8k
-#         if (input_length > 4096) and (input_length < 16000):
-#             shortcut = x  # Save the input for the residual connection
-#             x = kl.Conv1D(filters=512, kernel_size=8, kernel_initializer=self.init,
-#                           kernel_regularizer=kernel_regularizer, padding='same', activation=self.act)(x)
-#             x = kl.Conv1D(filters=512, kernel_size=8, kernel_initializer=self.init,
-#                           kernel_regularizer=kernel_regularizer, padding='same', activation=self.act)(x)
-#             x = kl.BatchNormalization()(x)  # Apply Batch Normalization
-#             x = kl.MaxPooling1D(pool_size=4, strides=4)(x)
-#             x = kl.Dropout(0.4)(x)
-
-#             # Adjust shortcut dimension
-#             shortcut = kl.MaxPooling1D(pool_size=4, strides=4)(shortcut)  # Downsample shortcut
-#             shortcut = kl.Conv1D(filters=512, kernel_size=1, kernel_initializer=self.init, padding='same')(shortcut)  # Match filter count
-#             x = kl.add([x, shortcut])  # Add residual connection
-
-#         # Convolutional block 6 and 7: Runs for sequence length 16k
-#         if (input_length > 8192) and (input_length < 32000):
-#             shortcut = x  # Save the input for the residual connection
-#             x = kl.Conv1D(filters=512, kernel_size=8, kernel_initializer=self.init,
-#                           kernel_regularizer=kernel_regularizer, padding='same', activation=self.act)(x)
-#             x = kl.Conv1D(filters=512, kernel_size=8, kernel_initializer=self.init,
-#                           kernel_regularizer=kernel_regularizer, padding='same', activation=self.act)(x)
-#             x = kl.BatchNormalization()(x)  # Apply Batch Normalization
-#             x = kl.MaxPooling1D(pool_size=4, strides=4)(x)
-#             x = kl.Dropout(0.4)(x)
-
-#             # Adjust shortcut dimension
-#             shortcut = kl.MaxPooling1D(pool_size=4, strides=4)(shortcut)  # Downsample shortcut
-#             shortcut = kl.Conv1D(filters=512, kernel_size=1, kernel_initializer=self.init, padding='same')(shortcut)  # Match filter count
-#             x = kl.add([x, shortcut])  # Add residual connection
-
-#         # Convolutional block 8 and 9: Runs for sequence length at least 32k  
-#         if input_length >= 32000: 
-#             shortcut = x  # Save the input for the residual connection
-#             x = kl.Conv1D(filters=512, kernel_size=8, kernel_initializer=self.init,
-#                           kernel_regularizer=kernel_regularizer, padding='same', activation=self.act)(x)
-#             x = kl.Conv1D(filters=512, kernel_size=8, kernel_initializer=self.init,
-#                           kernel_regularizer=kernel_regularizer, padding='same', activation=self.act)(x)
-#             x = kl.BatchNormalization()(x)  # Apply Batch Normalization
-#             x = kl.MaxPooling1D(pool_size=4, strides=4)(x)
-#             x = kl.Dropout(0.4)(x)
-
-#             # Adjust shortcut dimension
-#             shortcut = kl.MaxPooling1D(pool_size=4, strides=4)(shortcut)  # Downsample shortcut
-#             shortcut = kl.Conv1D(filters=512, kernel_size=1, kernel_initializer=self.init, padding='same')(shortcut)  # Match filter count
-#             x = kl.add([x, shortcut])  # Add residual connection
-
-#         # Reshape to pass into Transformer blocks
-#         seq_len = x.shape[1]  # Updated sequence length after convolutions
-#         x = kl.Reshape((seq_len, 512))(x)
-
-#         # Transformer blocks for long-range dependencies
-#         max_len = 512  # Adjust based on your input size
-#         relative_pos_embeds = relative_position_embedding(seq_len, max_len, self.ff_dim)
-
-#         for _ in range(self.num_transformer_blocks):
-#             # Save input for the residual connection
-#             input_x = x
-            
-#             # Add relative position embeddings to the input
-#             x_with_pos = x + relative_pos_embeds[:, :seq_len, :]
-            
-#             # Multi-head self-attention
-#             attn_output = kl.MultiHeadAttention(num_heads=self.num_heads, key_dim=32)(x, x)
-#             attn_output = kl.Dropout(0.5)(attn_output)
-
-#             # Add residual connection and normalize
-#             x = kl.LayerNormalization(epsilon=1e-6)(attn_output + input_x)
-
-#             # Feedforward layer
-#             ff_output = kl.Dense(self.ff_dim, activation="gelu")(x)
-#             ff_output = kl.Dropout(0.5)(ff_output)
-
-#             # Add residual connection and normalize
-#             x = kl.LayerNormalization(epsilon=1e-6)(ff_output + input_x)
-
-#         # Flatten the transformer output
-#         x = kl.Flatten()(x)
-
-#         # Fully connected layers with combined activation
-#         x = kl.Dense(4096, kernel_initializer=self.init, kernel_regularizer=kernel_regularizer, activation=self.act)(x)
-#         x = kl.Dropout(0.5)(x)
-
-#         x = kl.Dense(self.nb_hidden, kernel_initializer=self.init, kernel_regularizer=kernel_regularizer, activation=self.act)(x)
-#         x = kl.Dropout(0.5)(x)
-
-#         return self._build(inputs, x)
-
-
-
-
+    
 
  
  
@@ -2217,54 +2053,6 @@ class TranCNNAltRes2L(DnaModel):
 
 
 
-
-       
-        
-
-# Spline function to mimic the bspline operation
-# def bs(x, df=None, knots=None, degree=3, intercept=False):
-#     order = degree + 1
-#     inner_knots = []
-#     if df is not None and knots is None:
-#         n_inner_knots = df - order + (1 - intercept)
-#         if n_inner_knots < 0:
-#             n_inner_knots = 0
-#             print("df was too small; have used %d" % (order - (1 - intercept)))
-#         if n_inner_knots > 0:
-#             inner_knots = np.percentile(x, 100 * np.linspace(0, 1, n_inner_knots + 2)[1:-1])
-#     elif knots is not None:
-#         inner_knots = knots
-#     all_knots = np.concatenate(([np.min(x), np.max(x)] * order, inner_knots))
-#     all_knots.sort()
-#
-#     n_basis = len(all_knots) - (degree + 1)
-#     basis = np.empty((x.shape[0], n_basis), dtype=float)
-#
-#     for i in range(n_basis):
-#         coefs = np.zeros((n_basis,))
-#         coefs[i] = 1
-#         basis[:, i] = splev(x, (all_knots, coefs, degree))
-#
-#     if not intercept:
-#         basis = basis[:, 1:]
-#     return basis
-#
-#
-# def spline_factory(n, df, log=False):
-#     if log:
-#         dist = np.array(np.arange(n) - n / 2.0)
-#         dist = np.log(np.abs(dist) + 1) * (2 * (dist > 0) - 1)
-#         n_knots = df - 4
-#         knots = np.linspace(np.min(dist), np.max(dist), n_knots + 2)[1:-1]
-#         return tf.convert_to_tensor(bs(dist, knots=knots, intercept=True)) #, dtype=tf.float32)
-#     else:
-#         dist = np.arange(n)
-#         return tf.convert_to_tensor(bs(dist, df=df, intercept=True)) #, dtype=tf.float32)
-
-
-import numpy as np
-import tensorflow as tf
-from scipy.interpolate import splev
 
 
 # Class to handle B-spline generation
