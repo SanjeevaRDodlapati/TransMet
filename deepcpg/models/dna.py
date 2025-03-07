@@ -14,7 +14,7 @@ from tensorflow.keras import layers as kl
 from tensorflow.keras import regularizers as kr
 from scipy.interpolate import splev
 
-import sonnet as snt
+# import sonnet as snt
 
 from .utils import Model
 from ..utils import get_from_module
@@ -125,6 +125,919 @@ class DeepSEA(DnaModel):
         x = kl.Activation('relu')(x)
 
         return self._build(inputs, x)
+
+
+
+
+class AdvancedDilatedDNA(DnaModel):
+    """
+        AdvancedDilatedDNA is a deep model for one-hot encoded DNA sequences 
+    that incorporates residual connections, batch normalization, and dilated convolutions
+    to DeepSEA as a base model architecture.
+    
+    """
+
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(AdvancedDilatedDNA, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+
+        ## Block 1 (No pooling, residual connection)
+        shortcut1 = kl.Conv1D(320, 1, padding='same', kernel_initializer=self.init,
+                              kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Conv1D(320, 8, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Conv1D(320, 8, dilation_rate=2, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Add()([x, shortcut1])
+        x = kl.Dropout(0.2)(x)
+
+        ## Block 2 (With pooling, residual connection)
+        shortcut2 = kl.Conv1D(480, 1, padding='same', kernel_initializer=self.init,
+                              kernel_regularizer=kernel_regularizer)(kl.MaxPooling1D(4)(x))
+        x = kl.Conv1D(480, 8, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(480, 8, dilation_rate=4, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Add()([x, shortcut2])
+        x = kl.Dropout(0.2)(x)
+
+        ## Block 3 (With pooling, residual connection)
+        shortcut3 = kl.Conv1D(640, 1, padding='same', kernel_initializer=self.init,
+                              kernel_regularizer=kernel_regularizer)(kl.MaxPooling1D(4)(x))
+        x = kl.Conv1D(640, 8, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(640, 8, dilation_rate=8, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Add()([x, shortcut3])
+        x = kl.Dropout(0.3)(x)
+
+        # Final Stage
+        x = kl.GlobalAveragePooling1D()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+
+        return self._build(inputs, x)
+
+
+
+
+class LongDilDNA(DnaModel):
+    """
+    LongDilDNA is designed to capture long-range interactions
+    from very long one-hot encoded DNA sequence inputs (e.g., 16k or 32k in length).
+    
+    Using "same" padding in all convolutional layers, the sequence length is maintained 
+    (except for downsampling from pooling). With 5 blocks and MaxPooling1D with pool_size=4
+    in each block, the overall downsampling factor is 4^5 = 1024.
+    
+    For example:
+      - For a 32k input, final sequence width ≈ 32000/1024 ≈ 31 positions.
+      - For a 16k input, final sequence width ≈ 16000/1024 ≈ 16 positions.
+    
+    Architecture:
+      Block 1:
+         - Conv1D: 320 filters, kernel size=8, dilation_rate=1, padding="same"
+         - BatchNormalization, ReLU
+         - MaxPooling1D with pool_size=4
+         - Conv1D: 320 filters, kernel size=8, dilation_rate=2, padding="same"
+         - BatchNormalization, ReLU
+         - Dropout (0.2)
+      
+      Block 2:
+         - Conv1D: 480 filters, kernel size=8, dilation_rate=1, padding="same"
+         - BatchNormalization, ReLU
+         - MaxPooling1D with pool_size=4
+         - Conv1D: 480 filters, kernel size=8, dilation_rate=4, padding="same"
+         - BatchNormalization, ReLU
+         - Dropout (0.2)
+      
+      Block 3:
+         - Conv1D: 640 filters, kernel size=8, dilation_rate=1, padding="same"
+         - BatchNormalization, ReLU
+         - MaxPooling1D with pool_size=4
+         - Conv1D: 640 filters, kernel size=8, dilation_rate=8, padding="same"
+         - BatchNormalization, ReLU
+         - Dropout (0.3)
+      
+      Block 4:
+         - Conv1D: 960 filters, kernel size=8, dilation_rate=1, padding="same"
+         - BatchNormalization, ReLU
+         - MaxPooling1D with pool_size=4
+         - Conv1D: 960 filters, kernel size=8, dilation_rate=8, padding="same"
+         - BatchNormalization, ReLU
+         - Dropout (0.5)
+      
+      Block 5:
+         - Conv1D: 1024 filters, kernel size=8, dilation_rate=1, padding="same"
+         - BatchNormalization, ReLU
+         - MaxPooling1D with pool_size=4
+         - Conv1D: 1024 filters, kernel size=8, dilation_rate=8, padding="same"
+         - BatchNormalization, ReLU
+         - Dropout (0.5)
+      
+      Final Stage:
+         - GlobalAveragePooling1D
+         - Dense(nb_hidden) with BatchNormalization and ReLU
+         - Output is produced via self._build(inputs, x)
+    """
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(LongDilDNA, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        
+        # Block 1
+        x = kl.Conv1D(320, 8, dilation_rate=1, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.BatchNormalization()(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(320, 8, dilation_rate=2, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.BatchNormalization()(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 2
+        x = kl.Conv1D(480, 8, dilation_rate=1, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.BatchNormalization()(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(480, 8, dilation_rate=4, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.BatchNormalization()(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 3
+        x = kl.Conv1D(640, 8, dilation_rate=1, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.BatchNormalization()(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(640, 8, dilation_rate=8, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.BatchNormalization()(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.3)(x)
+        
+        # Block 4
+        x = kl.Conv1D(960, 8, dilation_rate=1, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.BatchNormalization()(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(960, 8, dilation_rate=8, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.BatchNormalization()(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.5)(x)
+        
+        # Block 5
+        x = kl.Conv1D(1024, 8, dilation_rate=1, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.BatchNormalization()(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(1024, 8, dilation_rate=8, padding='same', kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.BatchNormalization()(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.5)(x)
+        
+        # Final Stage
+        x = kl.GlobalAveragePooling1D()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.BatchNormalization()(x)
+        x = kl.Activation('relu')(x)
+        
+        return self._build(inputs, x)
+
+
+
+class DeepDilatedDNA(DnaModel):
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(DeepDilatedDNA, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        
+        # Block 1: Regular conv -> pooling -> dropout -> dilated conv (kernel size 8, dilation rate 2)
+        x = kl.Conv1D(320, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        # Dilated conv with kernel size 8, dilation rate 2
+        x = kl.Conv1D(320, 8, dilation_rate=2, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 2: Regular conv -> pooling -> dropout -> dilated conv (kernel size 8, dilation rate 4)
+        x = kl.Conv1D(480, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        # Dilated conv with kernel size 8, dilation rate 4
+        x = kl.Conv1D(480, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 3: Regular conv -> dropout -> dilated conv (kernel size 8, dilation rate 8)
+        x = kl.Conv1D(960, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        # Dilated conv with kernel size 8, dilation rate 8
+        x = kl.Conv1D(960, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.5)(x)
+        
+        # Flatten and fully connected layers
+        x = kl.Flatten()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        
+        return self._build(inputs, x)
+
+
+
+
+class DilatedDNAFreeze(DnaModel):
+    """
+    A DeepSEA-style model with an extra convolution block and dilated convolutions.
+    Unlike a doubling strategy, after reaching a dilation rate of 4, the dilation
+    is frozen at 4 in subsequent blocks.
+    
+    Architecture:
+      Block 1: Regular Conv (320 filters, kernel=8) → MaxPool (stride=4) → Dropout
+               → Dilated Conv (320 filters, kernel=8, dilation_rate=2)
+      Block 2: Regular Conv (528 filters, kernel=8) → MaxPool (stride=4) → Dropout
+               → Dilated Conv (528 filters, kernel=8, dilation_rate=4)
+      Block 3: Regular Conv (736 filters, kernel=8) → MaxPool (stride=4) → Dropout
+               → Dilated Conv (736 filters, kernel=8, dilation_rate=4)  [Frozen]
+      Block 4: Regular Conv (960 filters, kernel=8) → Dropout
+               → Dilated Conv (960 filters, kernel=8, dilation_rate=4)  [Frozen]
+      Followed by Flatten and Dense layers.
+    """
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(DilatedDNAFreeze, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        
+        # Block 1: 320 filters, dilation rate = 2
+        x = kl.Conv1D(320, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(320, 8, dilation_rate=2, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 2: 528 filters, dilation rate = 4
+        x = kl.Conv1D(528, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(528, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.3)(x)
+        
+        # Block 3: 736 filters, pooling followed by dilated conv with frozen dilation rate = 4
+        x = kl.Conv1D(736, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(736, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.4)(x)
+        
+        # Block 4: 960 filters, no pooling; dilated conv with frozen dilation rate = 4
+        x = kl.Conv1D(960, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Conv1D(960, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.5)(x)
+        
+        # Flatten and fully connected layer to produce final features.
+        x = kl.Flatten()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        
+        return self._build(inputs, x)
+        
+        
+        
+class DilatedL4(DnaModel):
+    """
+    A DeepSEA-style model with an extra convolution block and dilated convolutions.
+    Unlike a doubling strategy, after reaching a dilation rate of 4, the dilation
+    is frozen at 4 in subsequent blocks.
+    
+    Architecture:
+      Block 1: Regular Conv (320 filters, kernel=8) → MaxPool (stride=4) → Dropout
+               → Dilated Conv (320 filters, kernel=8, dilation_rate=2)
+      Block 2: Regular Conv (528 filters, kernel=8) → MaxPool (stride=4) → Dropout
+               → Dilated Conv (528 filters, kernel=8, dilation_rate=4)
+      Block 3: Regular Conv (736 filters, kernel=8) → MaxPool (stride=4) → Dropout
+               → Dilated Conv (736 filters, kernel=8, dilation_rate=4)  [Frozen]
+      Block 4: Regular Conv (960 filters, kernel=8) → Dropout
+               → Dilated Conv (960 filters, kernel=8, dilation_rate=4)  [Frozen]
+      Followed by Flatten and Dense layers.
+    """
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(DilatedL4, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        
+        # Block 1: 320 filters, dilation rate = 2
+        x = kl.Conv1D(320, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(320, 8, dilation_rate=2, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 2: 528 filters, dilation rate = 4
+        x = kl.Conv1D(528, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(528, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.3)(x)
+        
+        # Block 3: 736 filters, pooling followed by dilated conv with frozen dilation rate = 4
+        x = kl.Conv1D(736, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(736, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.4)(x)
+        
+        # Block 4: 960 filters, no pooling; dilated conv with frozen dilation rate = 4
+        x = kl.Conv1D(960, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Conv1D(960, 8, dilation_rate=16, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.5)(x)
+        
+        # Flatten and fully connected layer to produce final features.
+        x = kl.Flatten()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        
+        return self._build(inputs, x)
+        
+        
+        
+class DilatedL4Alt(DnaModel):
+    """
+    A DeepSEA-style model with an extra convolution block and dilated convolutions.
+    Unlike a doubling strategy, after reaching a dilation rate of 4, the dilation
+    is frozen at 4 in subsequent blocks.
+    
+    Architecture:
+      Block 1: Regular Conv (320 filters, kernel=8) → MaxPool (stride=4) → Dropout
+               → Dilated Conv (320 filters, kernel=8, dilation_rate=2)
+      Block 2: Regular Conv (528 filters, kernel=8) → MaxPool (stride=4) → Dropout
+               → Dilated Conv (528 filters, kernel=8, dilation_rate=4)
+      Block 3: Regular Conv (736 filters, kernel=8) → MaxPool (stride=4) → Dropout
+               → Dilated Conv (736 filters, kernel=8, dilation_rate=4)  [Frozen]
+      Block 4: Regular Conv (960 filters, kernel=8) → Dropout
+               → Dilated Conv (960 filters, kernel=8, dilation_rate=4)  [Frozen]
+      Followed by Flatten and Dense layers.
+    """
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(DilatedL4Alt, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        
+        # Block 1: 320 filters, dilation rate = 2
+        x = kl.Conv1D(320, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        # x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(320, 8, dilation_rate=2, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 2: 528 filters, dilation rate = 4
+        x = kl.Conv1D(528, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(528, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.3)(x)
+        
+        # Block 3: 736 filters, pooling followed by dilated conv with frozen dilation rate = 4
+        x = kl.Conv1D(736, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(736, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.4)(x)
+        
+        # Block 4: 960 filters, no pooling; dilated conv with frozen dilation rate = 4
+        x = kl.Conv1D(960, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(960, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.5)(x)
+        
+        # Flatten and fully connected layer to produce final features.
+        x = kl.Flatten()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        
+        return self._build(inputs, x)
+        
+        
+        
+        
+class Dilated6L(DnaModel):
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(Dilated6L, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        
+        # Block 1: 128 filters, no pooling, dilation_rate = 2, dropout 0.1
+        x = kl.Conv1D(128, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Conv1D(128, 8, dilation_rate=2, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.1)(x)
+        
+        # Block 2: 256 filters, max pool size = 2, dilation_rate = 4, dropout 0.2
+        x = kl.Conv1D(256, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(256, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 3: 384 filters, max pool size = 2, dilation_rate = 4, dropout 0.2
+        x = kl.Conv1D(384, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(384, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 4: 512 filters, max pool size = 2, dilation_rate = 4, dropout 0.3
+        x = kl.Conv1D(512, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(3)(x)
+        x = kl.Conv1D(512, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.3)(x)
+        
+        # Block 5: 640 filters, max pool size = 3, dilation_rate = 4, dropout 0.4
+        x = kl.Conv1D(640, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(3)(x)
+        x = kl.Conv1D(640, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.4)(x)
+        
+        # Block 6: 768 filters, max pool size = 4, dilation_rate = 4, dropout 0.5
+        x = kl.Conv1D(768, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(3)(x)
+        x = kl.Conv1D(768, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.5)(x)
+        
+        # Flatten and fully connected layer to produce final features.
+        x = kl.Flatten()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        
+        return self._build(inputs, x)
+        
+        
+
+class Dilated6Light(DnaModel):
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(Dilated6Light, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        
+        # Block 1: 64 filters, no pooling, dilation_rate = 2, dropout 0.1
+        x = kl.Conv1D(64, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Conv1D(64, 8, dilation_rate=2, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.1)(x)
+        
+        # Block 2: 128 filters, max pool size = 2, dilation_rate = 4, dropout 0.2
+        x = kl.Conv1D(128, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(128, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 3: 192 filters, max pool size = 2, dilation_rate = 4, dropout 0.2
+        x = kl.Conv1D(192, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(192, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 4: 256 filters, max pool size = 3, dilation_rate = 4, dropout 0.3
+        x = kl.Conv1D(256, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(3)(x)
+        x = kl.Conv1D(256, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.3)(x)
+        
+        # Block 5: 320 filters, max pool size = 3, dilation_rate = 4, dropout 0.4
+        x = kl.Conv1D(320, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(3)(x)
+        x = kl.Conv1D(320, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.4)(x)
+        
+        # Block 6: 384 filters, max pool size = 3, dilation_rate = 4, dropout 0.5
+        x = kl.Conv1D(384, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(3)(x)
+        x = kl.Conv1D(384, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.5)(x)
+        
+        # Flatten and fully connected layer to produce final features.
+        x = kl.Flatten()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        
+        return self._build(inputs, x)
+
+        
+
+class Dilated5Light(DnaModel):
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(Dilated5Light, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        
+        # Block 1: 64 filters, no pooling, dilation_rate = 2, dropout 0.1
+        x = kl.Conv1D(64, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Conv1D(64, 8, dilation_rate=2, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.1)(x)
+        
+        # Block 2: 128 filters, max pool size = 2, dilation_rate = 4, dropout 0.2
+        x = kl.Conv1D(128, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(128, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 3: 192 filters, max pool size = 2, dilation_rate = 8, dropout 0.2
+        x = kl.Conv1D(192, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(192, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 4: 256 filters, max pool size = 3, dilation_rate = 8, dropout 0.3
+        x = kl.Conv1D(256, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(3)(x)
+        x = kl.Conv1D(256, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.3)(x)
+        
+        # Block 5: 320 filters, max pool size = 4, dilation_rate = 8, dropout 0.4
+        x = kl.Conv1D(320, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(320, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.4)(x)
+        
+        # Flatten and fully connected layer to produce final features.
+        x = kl.Flatten()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        
+        return self._build(inputs, x)
+        
+        
+class DL5LtNoDO(DnaModel):
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(DL5LtNoDO, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        
+        # Block 1: 64 filters, no pooling, dilation_rate = 2, dropout 0.1
+        x = kl.Conv1D(64, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Conv1D(64, 8, dilation_rate=2, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        # x = kl.Dropout(0.1)(x)
+        
+        # Block 2: 128 filters, max pool size = 2, dilation_rate = 4, dropout 0.2
+        x = kl.Conv1D(128, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(128, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        # x = kl.Dropout(0.2)(x)
+        
+        # Block 3: 192 filters, max pool size = 2, dilation_rate = 8, dropout 0.2
+        x = kl.Conv1D(192, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(192, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        # x = kl.Dropout(0.2)(x)
+        
+        # Block 4: 256 filters, max pool size = 3, dilation_rate = 8, dropout 0.3
+        x = kl.Conv1D(256, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(256, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        # x = kl.Dropout(0.3)(x)
+        
+        # Block 5: 320 filters, max pool size = 4, dilation_rate = 8, dropout 0.4
+        x = kl.Conv1D(320, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(320, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        # x = kl.Dropout(0.4)(x)
+        
+        # Flatten and fully connected layer to produce final features.
+        x = kl.Flatten()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        
+        return self._build(inputs, x)
+  
+   
+   
+class DL5Medium(DnaModel):
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(DL5Medium, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        
+        # Block 1: 256 filters, no pooling, dilation_rate = 2, dropout 0.1
+        x = kl.Conv1D(256, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Conv1D(256, 8, dilation_rate=2, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.1)(x)
+        
+        # Block 2: 384 filters, max pool size = 2, dilation_rate = 4, dropout 0.2
+        x = kl.Conv1D(384, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(384, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 3: 512 filters, max pool size = 2, dilation_rate = 8, dropout 0.2
+        x = kl.Conv1D(512, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(512, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 4: 640 filters, max pool size = 3, dilation_rate = 8, dropout 0.3
+        x = kl.Conv1D(640, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(3)(x)
+        x = kl.Conv1D(640, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.3)(x)
+        
+        # Block 5: 768 filters, max pool size = 4, dilation_rate = 8, dropout 0.4
+        x = kl.Conv1D(768, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(768, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.4)(x)
+        
+        # Flatten and fully connected layer to produce final features.
+        x = kl.Flatten()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        
+        return self._build(inputs, x)
+
+
+
+
+class DL5MedMP1(DnaModel):
+    def __init__(self, nb_hidden=512, *args, **kwargs):
+        super(DL5MedMP1, self).__init__(*args, **kwargs)
+        self.nb_hidden = nb_hidden
+
+    def __call__(self, inputs):
+        x = inputs[0]
+        kernel_regularizer = kr.L1L2(l1=self.l1_decay, l2=self.l2_decay)
+        
+        # Block 1: 256 filters, dilation_rate = 2, dropout 0.1
+        x = kl.Conv1D(256, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(256, 8, dilation_rate=2, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.1)(x)
+        
+        # Block 2: 384 filters, max pool size = 2, dilation_rate = 4, dropout 0.2
+        x = kl.Conv1D(384, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(384, 8, dilation_rate=4, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 3: 512 filters, max pool size = 2, dilation_rate = 8, dropout 0.2
+        x = kl.Conv1D(512, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(2)(x)
+        x = kl.Conv1D(512, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.2)(x)
+        
+        # Block 4: 640 filters, max pool size = 3, dilation_rate = 8, dropout 0.3
+        x = kl.Conv1D(640, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(3)(x)
+        x = kl.Conv1D(640, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.3)(x)
+        
+        # Block 5: 768 filters, max pool size = 4, dilation_rate = 8, dropout 0.4
+        x = kl.Conv1D(768, 8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.MaxPooling1D(4)(x)
+        x = kl.Conv1D(768, 8, dilation_rate=8, kernel_initializer=self.init,
+                      kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        x = kl.Dropout(0.4)(x)
+        
+        # Flatten and fully connected layer to produce final features.
+        x = kl.Flatten()(x)
+        x = kl.Dense(self.nb_hidden, kernel_initializer=self.init,
+                     kernel_regularizer=kernel_regularizer)(x)
+        x = kl.Activation('relu')(x)
+        
+        return self._build(inputs, x)
+        
+        
+        
         
         
 class DeepSEA2(DnaModel):
@@ -161,6 +1074,7 @@ class DeepSEA2(DnaModel):
         x = kl.Activation('relu')(x)
 
         return self._build(inputs, x)
+        
         
         
 class DeepSEA3(DnaModel):
