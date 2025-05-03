@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Run with args",
+        "type": "python",
+        "request": "launch",
+        "program": "/home/sdodl001/TransMet/scripts/dcpg_data.py",  // Replace with your script path
+        "console": "integratedTerminal",
+        "args": [
+          "--cpg_profiles", "/scratch/ml-csm/projects/fgenom/dna-met/ENCODE/WGBS/data/sym_met/temp/*.parquet.gz",
+          "--dna_files", "/scratch/sdodl001/ENCODE/ref_genome/*.dna.*.fa.gz",
+          "--out_dir", "/scratch/ml-csm/projects/fgenom/dna-met/ENCODE/WGBS/sampled_data/clean/sym_met/smthmscl_fl_input_1k/",
+          "--dna_wlen", "1001"
+        ]
+      }
+    ]
+  }
+  

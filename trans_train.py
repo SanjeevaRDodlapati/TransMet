@@ -438,6 +438,11 @@ class App(object):
             type=int,
             default=2)
         g.add_argument(
+            '--restore_best_weights',
+            help='Whether to load previous best model weights and resume the training',
+            type=bool,
+            default=False)
+        g.add_argument(
             '--output_weights',
             help='Output weights defined as a list of `output`=`weight` '
             'patterns, where `output` is a regex of output names, and '
@@ -519,11 +524,12 @@ class App(object):
         ))
         
         # Callback to load weights of best model so far  if validation loss is not improved
-        callbacks.append(cbk.LoadBestWeights(
-            filepath=os.path.join(opts.out_dir, 'model_weights_val.keras'),
-            monitor='val_loss',
-            mode='min'
-        ))
+        if opts.restore_best_weights:
+            callbacks.append(cbk.LoadBestWeights(
+                filepath=os.path.join(opts.out_dir, 'model_weights_val.keras'),
+                monitor='val_loss',
+                mode='min'
+            ))
 
 
         def learning_rate_schedule(epoch):
@@ -959,7 +965,8 @@ class App(object):
         for output_name in output_names:
             self.metrics[output_name] = get_metrics(output_name, loss_fn=opts.loss_fn)
 
-        log.info("%s model is using %s optimizer" %(opts.dna_model[0], opts.optimizer))
+        # log.info("%s model is using %s optimizer" %(opts.dna_model[0], opts.optimizer))
+        log.info("Using %s optimizer" %(opts.optimizer))
         
         if opts.optimizer == 'RMSprop':
             optimizer = RMSprop(learning_rate=opts.learning_rate)

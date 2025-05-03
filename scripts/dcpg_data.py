@@ -109,9 +109,10 @@ def read_cpg_profiles(filenames, log=None, *args, **kwargs):
     for filename in filenames:
         if log:
             log(filename)
+        
         cpg_file = dat.GzipFile(filename, 'r')
+        cpg_profile = dat.read_cpg_profile(cpg_file, sort=True, *args, **kwargs)  
         output_name = split_ext(filename)
-        cpg_profile = dat.read_cpg_profile(cpg_file, sort=True, *args, **kwargs)
         cpg_profiles[output_name] = cpg_profile
         cpg_file.close()
     return cpg_profiles
@@ -185,8 +186,14 @@ def map_values(values, pos, target_pos, dtype=None, nan=dat.CPG_NAN):
         dtype = values.dtype
     target_values = np.empty(len(target_pos), dtype=dtype)
     target_values.fill(nan)
+    # idx = np.in1d(target_pos, pos).nonzero()[0]
+    # assert len(idx) == len(values)
+    unique_pos, unique_idx = np.unique(pos, return_index=True)
+    values = values[unique_idx]
+    pos = unique_pos
     idx = np.in1d(target_pos, pos).nonzero()[0]
     assert len(idx) == len(values)
+
     assert np.all(target_pos[idx] == pos)
     target_values[idx] = values
     return target_values
@@ -448,6 +455,7 @@ class App(object):
         # Iterate over chromosomes
         # ------------------------
         for chromo in pos_table.chromo.unique():
+            chromo = str(chromo)
             log.info('-' * 80)
             log.info('Chromosome %s ...' % (chromo))
             idx = pos_table.chromo == chromo

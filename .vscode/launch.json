@@ -1,27 +1,22 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Current File with Arguments",
-            "type": "debugpy",
+            "name": "Run with args",
+            "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "/home/sdodl001/TransMet/scripts/dcpg_data.py", // Replace with your script path
             "console": "integratedTerminal",
             "args": [
-                "${command:pickArgs}"
-            ]
-        },
-        {
-            "name": "Python Debugger: Current File with Arguments",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "args": [
-                "${command:pickArgs}"
+                "--cpg_profiles",
+                "/scratch/ml-csm/projects/fgenom/dna-met/ENCODE/WGBS/data/sampled/sym_met/0.001/ENCFF279HCL_GM12878_1frac_0.001.tsv",
+                "--dna_files",
+                "/scratch/ml-csm/projects/fgenom/ref_genome/human/GRCh38/",
+                // "/scratch/ml-csm/projects/fgenom/ref_genome/human/GRCh38/*.dna.*.fa.gz",
+                "--out_dir",
+                "/scratch/ml-csm/projects/fgenom/dna-met/ENCODE/WGBS/sampled_data/clean/sym_met/temp_fl_input_1k/",
+                "--dna_wlen",
+                "1001"
             ]
         }
     ]

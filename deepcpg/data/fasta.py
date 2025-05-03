@@ -118,7 +118,7 @@ def read_chromo(filenames, chromo):
     str
         DNA sequence of chromosome `chromo`.
     """
-    filename = select_file_by_chromo(filenames, chromo)
+    filename = select_file_by_chromo(filenames, str(chromo))
     if not filename:
         raise ValueError('DNA file for chromosome "%s" not found!' % chromo)
 

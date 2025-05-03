@@ -180,6 +180,7 @@ def is_bedgraph(filename):
     return re.match(r'track\s+type=bedGraph', line) is not None
 
 
+
 def format_chromo(chromo):
     """Format chromosome name.
 
@@ -239,6 +240,13 @@ def read_cpg_profile(filename, chromos=None, nb_sample=None, round=False,
     :class:`pandas.DataFrame`
          :class:`pandas.DataFrame` with columns `chromo`, `pos`, `value`.
     """
+    # if is_parquet(filename=filename):
+    #     d = pd.read_parquet(filename)
+    #     d.columns = ['chromo', 'pos', 'value']
+    #     d['chromo'] = d['chromo'].astype(str)
+    #     d['pos'] = d['pos'].astype(np.int32)
+    #     d['value'] = d['value'].astype(np.float16)
+
 
     if is_bedgraph(filename):
         usecols = [0, 1, 3]
@@ -246,12 +254,12 @@ def read_cpg_profile(filename, chromos=None, nb_sample=None, round=False,
     else:
         usecols = [0, 1, 2]
         skiprows = 0
-    dtype = {usecols[0]: str, usecols[1]: np.int32, usecols[2]: np.float16}
-    nrows = None
-    if chromos is None and nb_sample_chromo is None:
-        nrows = nb_sample
-    d = pd.read_table(filename, header=None, comment='#', nrows=nrows,
-                      usecols=usecols, dtype=dtype, skiprows=skiprows)
+        dtype = {usecols[0]: str, usecols[1]: np.int32, usecols[2]: np.float16}
+        nrows = None
+        if chromos is None and nb_sample_chromo is None:
+            nrows = nb_sample
+        d = pd.read_table(filename, header=None, comment='#', nrows=nrows,
+                        usecols=usecols, dtype=dtype, skiprows=skiprows)
     d.columns = ['chromo', 'pos', 'value']
     if np.any((d['value'] < 0) | (d['value'] > 1)):
         raise ValueError('Methylation values must be between 0 and 1!')
@@ -294,12 +302,15 @@ class GzipFile(object):
     """
     def __init__(self, filename, mode='r', *args, **kwargs):
         self.is_gzip = filename.endswith('.gz')
+        # self.is_parquet = filename.endswith('.parquet.gz')
+        # if self.is_parquet:
+        #     self.fh = open(filename, mode, *args, **kwargs)
         if self.is_gzip:
             self.fh = gzip.open(filename, mode, *args, **kwargs)
         else:
             self.fh = open(filename, mode, *args, **kwargs)
     
-    # python looks for this function, Javon, 12/14/2020
+    # python looks for this function, Sanjeev Apr9, 2025
     def __iter__(self, *args, **kwargs):
         return self.fh.__iter__(*args, **kwargs)
         
