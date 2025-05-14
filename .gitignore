@@ -1,0 +1,84 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Transpiled notebooks / checkpoints
+.ipynb_checkpoints/
+
+# VSCode and JetBrains IDEs
+.vscode/
+.idea/
+
+# macOS system files
+.DS_Store
+
+# Jupyter Notebook
+*.ipynb
+
+# Data and experiment outputs (optional)
+data/
+*.log
+*.tmp
+*.bak
+
+# GitHub-specific files
+.github/
+
+# Logs or run metadata
+*.out
+*.err
+*.log
+logs/
+
+# Training checkpoints or model weights
+checkpoints/
+*.ckpt
+*.pth
+*.pt
+*.h5
+*.onnx
+
