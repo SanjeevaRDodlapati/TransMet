@@ -1,0 +1,246 @@
+# <type>(<scope>): <subject>
+#
+# <body>
+#
+# <footer>
+
+# Type must be one of the following:
+#   feat:     A new feature
+#   fix:      A bug fix
+#   docs:     Documentation only changes
+#   style:    Changes that do not affect the meaning of the code
+#   refactor: A code change that neither fixes a bug nor adds a feature
+#   perf:     A code change that improves performance
+#   test:     Adding missing tests or correcting existing tests
+#   chore:    Changes to the build process or auxiliary tools
+#
+# Scope (optional): The scope should be the name of the package affected
+#   Examples: analysis, models, utils, cli, docs
+#
+# Subject: Short description (50 chars max)
+#   - Use imperative mood: "add" not "added" or "adds"
+#   - Don't capitalize first letter
+#   - No dot (.) at the end
+#
+# Body: Explain what and why vs. how (wrap at 72 chars)
+#
+# Footer: Reference issues and breaking changes
+#   Examples:
+#   Fixes #123
+#   BREAKING CHANGE: removed deprecated API
+EOF
+
+echo "✅ Created commit message template"
+
+# Set up commit template for each repository
+foreach repo (UAVarPrior GenomicLightning FuGEP TransMet)
+    echo "🔧 Setting up commit template for $repo..."
+    cd "/home/sdodl001/$repo"
+    
+    # Copy template to repo
+    cp ../github_automation/configs/commit_template.txt .gitmessage
+    
+    # Configure git to use the template
+    git config commit.template .gitmessage
+    
+    echo "   ✅ $repo configured with commit template"
+end
+
+echo ""
+echo "🎯 STEP 2: Create pre-commit hook for commit validation"
+echo "====================================================="
+
+# Create commit message validation script
+cat > github_automation/configs/validate_commit_msg.py << 'EOF'
+#!/usr/bin/env python3
+"""Validate commit messages follow conventional commit format."""
+
+import re
+import sys
+
+def validate_commit_message(commit_msg):
+    """Validate commit message follows conventional commit format."""
+    
+    # Conventional commit pattern
+    pattern = r'^(feat|fix|docs|style|refactor|perf|test|chore)(\(.+\))?: .{1,50}$'
+    
+    lines = commit_msg.strip().split('\n')
+    if not lines:
+        return False, "Empty commit message"
+    
+    subject = lines[0].strip()
+    
+    # Check if it matches conventional commit format
+    if not re.match(pattern, subject):
+        return False, f"""
+❌ Commit message doesn't follow conventional commit format!
+
+Current: {subject}
+
+Required format: <type>(<scope>): <description>
+
+Examples:
+  ✅ feat(analysis): add variant prioritization algorithm
+  ✅ fix(models): resolve memory leak in neural network
+  ✅ docs: update API documentation
+  ✅ test(utils): add unit tests for data processing
+
+Types: feat, fix, docs, style, refactor, perf, test, chore
+"""
+    
+    return True, "Valid commit message"
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: validate_commit_msg.py <commit_message_file>")
+        sys.exit(1)
+    
+    try:
+        with open(sys.argv[1], 'r') as f:
+            commit_msg = f.read()
+        
+        is_valid, message = validate_commit_message(commit_msg)
+        
+        if not is_valid:
+            print(message)
+            sys.exit(1)
+        else:
+            print("✅ Commit message is valid!")
+            sys.exit(0)
+            
+    except Exception as e:
+        print(f"Error validating commit message: {e}")
+        sys.exit(1)
+EOF
+
+chmod +x github_automation/configs/validate_commit_msg.py
+
+echo "✅ Created commit message validator"
+
+echo ""
+echo "🎯 STEP 3: Install commit-msg hooks in repositories"
+echo "=================================================="
+
+foreach repo (UAVarPrior GenomicLightning FuGEP TransMet)
+    echo "🪝 Installing commit-msg hook in $repo..."
+    cd "/home/sdodl001/$repo"
+    
+    # Create commit-msg hook
+    cat > .git/hooks/commit-msg << 'EOF'
+#!/bin/bash
+# Validate commit message using conventional commit format
+
+python3 ../github_automation/configs/validate_commit_msg.py "$1"
+EOF
+    
+    chmod +x .git/hooks/commit-msg
+    echo "   ✅ commit-msg hook installed in $repo"
+end
+
+echo ""
+echo "🎯 STEP 4: Create example commits guide"
+echo "======================================"
+
+cat > github_automation/guides_docs/conventional_commits_guide.md << 'EOF'
+# Conventional Commits Guide
+
+## Format
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+## Types
+
+- **feat**: A new feature
+- **fix**: A bug fix  
+- **docs**: Documentation only changes
+- **style**: Changes that don't affect code meaning (formatting, etc)
+- **refactor**: Code change that neither fixes bug nor adds feature
+- **perf**: Code change that improves performance
+- **test**: Adding missing tests or correcting existing tests
+- **chore**: Changes to build process or auxiliary tools
+
+## Genomics-Specific Examples
+
+```bash
+# Features
+feat(analysis): add variant prioritization scoring algorithm
+feat(models): implement deep learning model for genomic prediction
+feat(cli): add command for batch processing VCF files
+
+# Bug fixes  
+fix(parser): handle malformed VCF entries gracefully
+fix(models): resolve CUDA memory leak in training loop
+fix(utils): correct chromosome name normalization
+
+# Documentation
+docs(api): update function signatures in analysis module
+docs: add tutorial for variant calling pipeline
+docs(readme): update installation instructions
+
+# Tests
+test(analysis): add unit tests for variant filtering
+test(integration): add end-to-end pipeline tests
+test(models): add performance benchmarks
+
+# Performance
+perf(analysis): optimize variant scoring algorithm
+perf(io): improve VCF file reading speed
+
+# Refactoring
+refactor(models): simplify neural network architecture
+refactor(utils): extract common genomic utilities
+```
+
+## Scopes (Repository-specific)
+
+### UAVarPrior
+- analysis, models, cli, utils, docs, tests
+
+### GenomicLightning  
+- framework, models, callbacks, utils, examples
+
+### FuGEP
+- pipeline, analysis, cli, configs, docs
+
+### TransMet
+- transfer, models, data, training, evaluation
+
+## Tools Setup
+
+Your repositories are now configured with:
+- ✅ Commit message templates (`.gitmessage`)
+- ✅ Validation hooks (`.git/hooks/commit-msg`)
+- ✅ Automatic format checking
+
+## Usage
+
+1. **Standard commit**: `git commit` (opens template)
+2. **Quick commit**: `git commit -m "feat(analysis): add new scoring method"`
+3. **Template help**: `cat .gitmessage`
+
+The commit hook will automatically validate your message format!
+EOF
+
+echo "✅ Created conventional commits guide"
+
+echo ""
+echo "🎉 CONVENTIONAL COMMIT STANDARDS IMPLEMENTED!"
+echo "============================================="
+echo ""
+echo "✅ What's been set up:"
+echo "   📝 Commit message templates in all repositories"
+echo "   🪝 Commit validation hooks"
+echo "   📚 Comprehensive guide and examples"
+echo "   🎯 Genomics-specific commit types and scopes"
+echo ""
+echo "🚀 Next time you commit:"
+echo "   1. Run 'git commit' (template will open)"
+echo "   2. Follow conventional commit format"
+echo "   3. Hook will validate before accepting"
+echo ""
+echo "📖 Reference guide: ./github_automation/guides_docs/conventional_commits_guide.md"
